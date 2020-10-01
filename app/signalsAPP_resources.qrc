@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/icon_images">
+        <file>pauseButton.png</file>
+        <file>playButton.png</file>
+        <file>settingsIcon.jpg</file>
+        <file>sphereIcon.png</file>
+    </qresource>
+</RCC>
