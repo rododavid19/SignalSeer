@@ -26,8 +26,8 @@ class signalDisplayWidget : public QWidget
 public:
     explicit signalDisplayWidget(QWidget *parent = nullptr);
     ~signalDisplayWidget();
-    QVector<double>            global_buffer;
-
+    QByteArray            global_buffer;
+    QVector<double>       graph_buffer;
 private:
     enum Mode {
         NoMode,
@@ -39,9 +39,10 @@ private:
     // TODO: notice that Engine, and signalWidget have their own reset()
     void reset();
     void setMode(Mode mode);
+    Mode getMode(){ return mode; }
     void generateWave();
 
-    Mode                    m_mode;
+    Mode                    mode;
     Ui::signalDisplay       *ui;
     Engine                  *m_engine;
     signalSettingsDialog    *m_settings_dialog;
@@ -49,6 +50,8 @@ private:
     QAudioBuffer            buffer;
     QAudioDecoder           *decoder;
     QCPGraph                *waveGraph;
+    QAudioBuffer            audio_buffer;
+    QAudioOutput            *audio_out;
 
 
 private slots:

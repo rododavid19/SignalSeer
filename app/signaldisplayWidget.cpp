@@ -8,7 +8,7 @@ signalDisplayWidget::signalDisplayWidget(QWidget *parent) :
   ,ui(new Ui::signalDisplay)
   ,m_engine(new Engine(this))
   ,m_settings_dialog(new signalSettingsDialog(this, m_engine))  // this needs engine
-  ,m_mode(NoMode)
+  ,mode(NoMode)
   ,m_generate_dialog(new generateSettings(this, m_engine))        // this needs engine
   ,decoder(new QAudioDecoder(this))
 
@@ -50,7 +50,7 @@ void signalDisplayWidget::on_settingsButton_clicked()
 // TODO:
 void signalDisplayWidget::setMode(Mode mode)
 {
-    m_mode = mode;
+    this->mode = mode;
 }
 
 
@@ -65,11 +65,16 @@ void signalDisplayWidget::on_modeBox_activated(const QString &arg1)
         const QString dir;
         const QStringList fileNames = QFileDialog::getOpenFileNames(this, tr("Open WAV file"), dir, "*.wav");
 
+        // TODO: Check audio format, i.e mp3, acc, lossless (decompression needed)
+        // Gather all wavFile data from HEADER. i.e duration, amplitude, enough to Plot!
+        // consider stereo
+
 
     }
     if (arg1 == "Generate"){
-        this->m_generate_dialog->exec();
-        this->generateWave();
+        m_generate_dialog->exec();
+        setMode(GenerateMode);
+        generateWave(); //TODO: refactor to engine class and then call using Engine reference
 
     }
     if (arg1 == "Record"){
@@ -86,29 +91,50 @@ void signalDisplayWidget::generateWave()
     auto frequency = m_engine->getFrequency();
     auto phase = m_engine->getPhase();
 
-    ui->waveformPlot->addGraph(); // Will create a new line
+    // TODO:  Future feature could be adding a gprrah to the same plot and allowing user
+    // to select wave that they want to play
+    ui->waveformPlot->clearGraphs();
+    ui->waveformPlot->addGraph(); // Will create a new line,
 
-    global_buffer.resize(100);
+    global_buffer.resize(1*44100);
+    graph_buffer.resize(1*44100);
     double m_time = 0.0;
     //TODO: sample rate must change here based on provided wav file
     double delta_time = 1.0/44100.0;
 
     QVector<double> x(global_buffer.size());
-    for (int i = 0; i < global_buffer.size(); i++){
-        global_buffer[i] =  amplitude  * sin(2 * M_PI * frequency * m_time + phase);
-        x[i] = i;
-        m_time += delta_time;
+
+    // first define max amplitude for PCM, based off bits per sample. i.e if bitsPerSample = 16, then this is 2^15-1
+    //       i < samplerateHZ * seconds
+    for(int i =0; i< 44100 * 1; i++ ){
+        double timeIndexSecond = (double)i/ 44100.0;//  44100 needs to change to sampleRateHZ
+        double tonePeriodSeconds = 1.0 / frequency;
+        double radians = timeIndexSecond/ tonePeriodSeconds * (2*M_PI);
+        double sample = sin(radians);
+        //sample get envelope
+        //sample get volume
+        x[i] = timeIndexSecond;
+        double samplePCM = (sample + 1.0) / 2.0 * 256;
+        //TODO: here amplitude is divided by 100 becasue it was arbitraily chosen, this shoudl change
+        global_buffer[i] = samplePCM; //* amplitude/100;
+        graph_buffer[i] = sample;
+
     }
-    ui->waveformPlot->xAxis->setRange(0, global_buffer.size());
-   // ui->waveformPlot->axisRect()->setupFullAxesBox();
 
-   // ui->waveformPlot->yAxis->setRange(-5.0, -5.0);
+    QSharedPointer<QCPAxisTickerTime> timeTicker(new QCPAxisTickerTime);
+    timeTicker->setTimeFormat("%m:%s");
+    ui->waveformPlot->xAxis->setTicker(timeTicker);
 
-    ui->waveformPlot->graph()->addData(x, global_buffer);
+    ui->waveformPlot->graph()->addData(x, graph_buffer);
     ui->waveformPlot->rescaleAxes();
+    ui->waveformPlot->axisRect()->setupFullAxesBox();
    // ui->waveformPlot->plotLayout()->insertRow(0);
     //ui->waveformPlot->plotLayout()->addElement(0, 0, new QCPTextElement(ui->waveformPlot, "Generated Wave", QFont("sans", 12, QFont::Bold)));
-    ui->waveformPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+    ui->waveformPlot->axisRect()->setRangeZoom(Qt::Horizontal);
+    ui->waveformPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+    //TODO: if you add QCP::iSelectPlotabbles to Interactions, and lines of code below then you can select range of data from plot
+    //ui->waveformPlot->setSelectionRectMode(QCP::srmSelect);
+    //ui->waveformPlot->graph()->setSelectable(QCP::stDataRange);
     ui->waveformPlot->replot();
 
 }
@@ -120,4 +146,38 @@ void signalDisplayWidget::on_startButton_clicked()
     //  2: play whatever is in buffer, if buffer is empty prompt the user to select Generate or Load or Record, then do nothing.
     //  if buffer not empty, then play
 
+
+    //TODO: get format from engine and then instantiate or use reference
+    // TODO: 1st check mode
+    //TODO: if user has not selected out/in devices then set default as selected and continue
+    const auto outputDevice = this->m_engine->getoutputDevice();
+
+    const Mode current_mode = getMode();
+    if (current_mode == NoMode){
+        int a = 4;
+    }
+    QAudioFormat format;
+    format.setSampleRate(44100);
+    format.setChannelCount(1);
+    format.setSampleSize(8);
+    format.setCodec("audio/pcm");
+    format.setByteOrder(QAudioFormat::LittleEndian);
+    format.setSampleType(QAudioFormat::SignedInt); // TODO: doesn't seeem to matter?...
+
+    audio_out = new QAudioOutput(format, this);
+
+    // TODO: Change this to setDevice from engine, and if No device was set then select default
+    QAudioDeviceInfo info(QAudioDeviceInfo::defaultOutputDevice());
+        if (!info.isFormatSupported(format)) {
+            qWarning() << "Raw audio format not supported by backend, cannot play audio.";
+            return;
+        }
+        //TODO: setBuffer to sampleRate * Seconds
+    audio_out->setBufferSize(44100);
+    auto out_device = audio_out->start();
+    //qDebug() << "AudioDevice Buffer size is " << audio_out->bufferSize();
+    auto bytesWritten = out_device->write(global_buffer);
+    //qDebug() << "AudioDevice played " << audio_out->bufferSize() << " bytes";
+
 }
+
